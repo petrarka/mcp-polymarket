@@ -1,0 +1,22 @@
+---
+"@iqai/mcp-polymarket": minor
+---
+
+Migrate to Polymarket v2 / pUSD (April 28 2026 exchange upgrade)
+
+The Polymarket exchange migrated from USDC.e to pUSD collateral and bumped CLOB endpoints to v2 on April 28 2026. The legacy `@polymarket/clob-client` (v1) is no longer compatible — placing orders against the v2 exchange fails when signed with v1 contracts.
+
+Changes:
+
+- Swap dependency `@polymarket/clob-client@^4.22.8` → `@polymarket/clob-client-v2@^1.0.6` (add `viem` as supporting dep).
+- `services/trading.ts`: v2 SDK uses object-form constructor (`{ host, chain, signer, ... }`), `chainId` is renamed to `chain`, and `createOrDeriveApiKey()` replaces the separate `deriveApiKey()` / `createApiKey()` calls.
+- `UserOrder` / `UserMarketOrder` now `UserOrderV2` / `UserMarketOrderV2`. The v2 types dropped `feeRateBps`, `nonce`, and `taker` (server-side now). The order-construction code was updated accordingly.
+- `services/config.ts`: `USDC_ADDRESS` (USDC.e) replaced with `COLLATERAL_ADDRESS` (pUSD `0xC011a7E1...`). Exchange addresses updated to the v2 contracts (`0xE111180...` and `0xe2222d2...`). Added `USDCE_ADDRESS`, `COLLATERAL_ONRAMP_ADDRESS`, `COLLATERAL_OFFRAMP_ADDRESS` constants for wrap/unwrap flows.
+- `services/approvals.ts`: collateral allowances now target the pUSD contract on the v2 exchanges. Rationale and rename: `getUsdcContract` → `getCollateralContract`.
+- `services/redemption.ts`: `redeemPositions` now passes pUSD as the collateral token (was USDC.e).
+- `services/api.ts`: dropped the `PolymarketSDK` (v1) usage from `@jsr/hk__polymarket` in favor of a direct `/book` fetch (the endpoint is public and works without auth). `GammaSDK` is retained for market discovery — Gamma API was not affected by the upgrade.
+- `tools/get-balance-allowance.ts`, `tools/update-balance-allowance.ts`: `AssetType` import path updated to v2 SDK.
+
+Adds `smoke-test.mjs` — 8-test regression harness that hits live Polymarket APIs (read-only by default, exercises trading-client init only if `POLYMARKET_PRIVATE_KEY` is set; never places orders). Run with `node smoke-test.mjs` after `pnpm build`.
+
+Default `signatureType` semantics are unchanged (still 2 = POLY_GNOSIS_SAFE when auto-detected with a `funderAddress`, 0 = EOA otherwise) — v2 ClobClient continues to accept `signatureType` + `funderAddress` for proxy-wallet flows.

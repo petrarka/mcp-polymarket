@@ -245,7 +245,7 @@ export class PolymarketRedemption {
 
 				const ctf = this.getCtfContract();
 				tx = await ctf.redeemPositions(
-					POLYGON_ADDRESSES.USDC_ADDRESS,
+					POLYGON_ADDRESSES.COLLATERAL_ADDRESS,
 					PARENT_COLLECTION_ID,
 					conditionIdBytes32,
 					winningIndexSets,

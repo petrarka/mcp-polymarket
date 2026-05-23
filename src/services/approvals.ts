@@ -87,9 +87,9 @@ export class PolymarketApprovals {
 
 	static rationale(): string {
 		return [
-			"Trading on Polymarket requires granting limited permissions:",
-			"- USDC allowances let CTF, Exchange, and NegRisk contracts move USDC for minting/settling.",
-			"- CTF setApprovalForAll lets Exchange and NegRisk move position tokens during settlement.",
+			"Trading on Polymarket (v2, post-April-2026 migration) requires granting limited permissions:",
+			"- pUSD allowances let CTF, Exchange v2, and NegRisk contracts move collateral for minting/settling.",
+			"- CTF setApprovalForAll lets Exchange v2 and NegRisk move position tokens during settlement.",
 			"Standard ERC20/ERC1155 approvals set to MaxUint. Revocable anytime in your wallet.",
 		].join("\n");
 	}
@@ -102,7 +102,7 @@ export class PolymarketApprovals {
 			NEG_RISK_EXCHANGE_ADDRESS,
 			NEG_RISK_ADAPTER_ADDRESS,
 		} = POLYGON_ADDRESSES;
-		const usdc = getUsdcContract(this.signer);
+		const usdc = getCollateralContract(this.signer);
 		const ctf = getCtfContract(this.signer);
 		const addr = this.signer.address;
 
@@ -175,7 +175,7 @@ export class PolymarketApprovals {
 			NEG_RISK_EXCHANGE_ADDRESS,
 			NEG_RISK_ADAPTER_ADDRESS,
 		} = POLYGON_ADDRESSES;
-		const usdc = getUsdcContract(this.signer);
+		const usdc = getCollateralContract(this.signer);
 		const ctf = getCtfContract(this.signer);
 		const current = await this.check();
 		const waitConfs = opts?.waitForConfirmations ?? 0;
@@ -292,14 +292,16 @@ export class ApprovalRequiredError extends Error {
 }
 
 /**
- * Get USDC contract instance (following Polymarket SDK pattern)
+ * Get the collateral token (pUSD) contract instance.
+ * Post April 2026 migration, the collateral is pUSD (1:1 USDC wrapper),
+ * not the bridged USDC.e that was used before.
  */
-function getUsdcContract(wallet: Wallet): Contract {
-	const USDC_ABI = [
+function getCollateralContract(wallet: Wallet): Contract {
+	const ERC20_ABI = [
 		"function allowance(address owner, address spender) view returns (uint256)",
 		"function approve(address spender, uint256 amount) returns (bool)",
 	];
-	return new Contract(POLYGON_ADDRESSES.USDC_ADDRESS, USDC_ABI, wallet);
+	return new Contract(POLYGON_ADDRESSES.COLLATERAL_ADDRESS, ERC20_ABI, wallet);
 }
 
 /**

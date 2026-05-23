@@ -3,10 +3,10 @@ import type {
 	OpenOrderParams,
 	TickSize,
 	TradeParams,
-	UserMarketOrder,
-	UserOrder,
-} from "@polymarket/clob-client";
-import { ClobClient, OrderType, Side } from "@polymarket/clob-client";
+	UserMarketOrderV2,
+	UserOrderV2,
+} from "@polymarket/clob-client-v2";
+import { ClobClient, OrderType, Side } from "@polymarket/clob-client-v2";
 import { providers, Wallet } from "ethers";
 import { log } from "../util/log.js";
 import { PolymarketApprovals } from "./approvals.js";
@@ -72,16 +72,12 @@ export class PolymarketTrading {
 	}
 
 	/**
-	 * Initialize the CLOB client with credentials
+	 * Initialize the CLOB client with credentials.
+	 * Uses the v2 SDK (post-April-2026 migration). The constructor takes an options
+	 * object with `chain` (not `chainId`), and createOrDeriveApiKey is now a single call.
 	 */
 	async initialize(): Promise<void> {
 		if (this.client) return;
-		let apiCreds: {
-			key: string;
-			secret: string;
-			passphrase: string;
-			apiKey?: string;
-		};
 		const cfg = getConfig(this.config);
 		// Use StaticJsonRpcProvider to completely skip network auto-detection
 		// This prevents "could not detect network" errors from flaky RPCs
@@ -92,28 +88,27 @@ export class PolymarketTrading {
 		const ethersSigner = new Wallet(this.config.privateKey, provider);
 		this.signer = ethersSigner;
 		const host = cfg.host;
-		const tempClient = new ClobClient(host, cfg.chainId, ethersSigner);
-		// Attempt to first derive, and on failure create a new
-		// There seems to be an issue with createOrDeriveApiKey()
-		// See: https://github.com/Polymarket/clob-client/issues/202
-		try {
-			apiCreds = await tempClient.deriveApiKey();
-		} catch {
-			apiCreds = await tempClient.createApiKey();
-		}
-
-		apiCreds.apiKey = apiCreds.key;
-		// Create client with credentials
-		this.client = new ClobClient(
+		// v2 ClobClient accepts ethers Wallet via the EthersSigner branch of ClobSigner.
+		const tempClient = new ClobClient({
 			host,
-			cfg.chainId || 137,
-			ethersSigner,
-			apiCreds,
-			cfg.signatureType,
-			cfg.funderAddress,
-		);
+			chain: cfg.chainId,
+			signer: ethersSigner,
+			signatureType: cfg.signatureType,
+			funderAddress: cfg.funderAddress,
+		});
+		const apiCreds = await tempClient.createOrDeriveApiKey();
 
-		log("Polymarket trading client initialized");
+		// Create client with credentials
+		this.client = new ClobClient({
+			host,
+			chain: cfg.chainId || 137,
+			signer: ethersSigner,
+			creds: apiCreds,
+			signatureType: cfg.signatureType,
+			funderAddress: cfg.funderAddress,
+		});
+
+		log("Polymarket trading client initialized (v2 SDK)");
 		log(`  - Signer: ${await ethersSigner.getAddress()}`);
 		log(`  - Signature Type: ${cfg.signatureType}`);
 		if (cfg.funderAddress) {
@@ -240,14 +235,14 @@ export class PolymarketTrading {
 		// Auto-detect market parameters if not provided
 		const marketParams = await this.getMarketParams(args.tokenId);
 
-		const userOrder: UserOrder = {
+		// v2 UserOrder dropped feeRateBps, nonce, taker. Fees are now resolved
+		// server-side; passing them would no-op or fail type checks.
+		const userOrder: UserOrderV2 = {
 			tokenID: args.tokenId,
 			price: args.price,
 			size: args.size,
 			side: side,
-			expiration: args.expiration,
-			nonce: args.nonce,
-			feeRateBps: args.feeRateBps ?? marketParams.feeRateBps,
+			...(args.expiration !== undefined && { expiration: args.expiration }),
 		};
 
 		const client = this.getClient();
@@ -294,11 +289,11 @@ export class PolymarketTrading {
 		// Auto-detect market parameters if not provided
 		const marketParams = await this.getMarketParams(args.tokenId);
 
-		const userMarketOrder: UserMarketOrder = {
+		// v2 UserMarketOrder also dropped feeRateBps (server-side now).
+		const userMarketOrder: UserMarketOrderV2 = {
 			tokenID: args.tokenId,
 			amount: args.amount,
 			side: side,
-			feeRateBps: args.feeRateBps ?? marketParams.feeRateBps,
 		};
 
 		const client = this.getClient();
