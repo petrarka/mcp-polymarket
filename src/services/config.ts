@@ -35,20 +35,21 @@ export function getConfig(overrides: Partial<BaseConfig> = {}): BaseConfig {
 
 	const chainId = Number(overrides.chainId ?? process.env.CHAIN_ID ?? 137);
 
+	const privateKey = overrides.privateKey ?? process.env.POLYMARKET_PRIVATE_KEY;
+	const funderAddress =
+		overrides.funderAddress ??
+		process.env.POLYMARKET_FUNDER ??
+		process.env.FUNDER_ADDRESS;
 	const signatureType = Number(
-		overrides.signatureType ?? process.env.SIGNATURE_TYPE ?? 2,
+		overrides.signatureType ??
+			process.env.SIGNATURE_TYPE ??
+			(funderAddress ? 2 : 0),
 	);
 
 	const rpcUrl =
 		overrides.rpcUrl ??
 		process.env.POLYGON_RPC_URL ??
 		"https://polygon-rpc.com";
-
-	const privateKey = overrides.privateKey ?? process.env.POLYMARKET_PRIVATE_KEY;
-	const funderAddress =
-		overrides.funderAddress ??
-		process.env.POLYMARKET_FUNDER ??
-		process.env.FUNDER_ADDRESS;
 
 	return {
 		host,

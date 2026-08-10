@@ -6,8 +6,13 @@ import type {
 	UserMarketOrderV2,
 	UserOrderV2,
 } from "@polymarket/clob-client-v2";
-import { ClobClient, OrderType, Side } from "@polymarket/clob-client-v2";
-import { providers, Wallet } from "ethers";
+import {
+	AssetType,
+	ClobClient,
+	OrderType,
+	Side,
+} from "@polymarket/clob-client-v2";
+import { providers, utils, Wallet } from "ethers";
 import { log } from "../util/log.js";
 import { PolymarketApprovals } from "./approvals.js";
 import { getConfig } from "./config.js";
@@ -197,6 +202,17 @@ export class PolymarketTrading {
 		return params;
 	}
 
+	private async getBuyCollateralBalance(
+		side: Side,
+	): Promise<number | undefined> {
+		if (side !== Side.BUY) return undefined;
+
+		const { balance } = await this.getClient().getBalanceAllowance({
+			asset_type: AssetType.COLLATERAL,
+		});
+		return Number(utils.formatUnits(balance, 6));
+	}
+
 	/**
 	 * Clear the market parameters cache (useful if market settings change)
 	 */
@@ -218,11 +234,9 @@ export class PolymarketTrading {
 		side: "BUY" | "SELL";
 		orderType?: "GTC" | "GTD";
 		expiration?: number;
-		nonce?: number;
 		// Optional overrides (if you know the market params)
 		tickSize?: string;
 		negRisk?: boolean;
-		feeRateBps?: number;
 	}): Promise<unknown> {
 		await this.ensureInitialized();
 		await this.assertApprovals();
@@ -232,17 +246,18 @@ export class PolymarketTrading {
 		const orderType: OrderType.GTC | OrderType.GTD =
 			orderTypeStr === "GTD" ? OrderType.GTD : OrderType.GTC;
 
-		// Auto-detect market parameters if not provided
 		const marketParams = await this.getMarketParams(args.tokenId);
+		const userCollateralBalance = await this.getBuyCollateralBalance(side);
 
-		// v2 UserOrder dropped feeRateBps, nonce, taker. Fees are now resolved
-		// server-side; passing them would no-op or fail type checks.
 		const userOrder: UserOrderV2 = {
 			tokenID: args.tokenId,
 			price: args.price,
 			size: args.size,
-			side: side,
+			side,
 			...(args.expiration !== undefined && { expiration: args.expiration }),
+			...(userCollateralBalance !== undefined && {
+				userUSDCBalance: userCollateralBalance,
+			}),
 		};
 
 		const client = this.getClient();
@@ -276,7 +291,6 @@ export class PolymarketTrading {
 		// Optional overrides
 		tickSize?: string;
 		negRisk?: boolean;
-		feeRateBps?: number;
 	}): Promise<unknown> {
 		await this.ensureInitialized();
 		await this.assertApprovals();
@@ -286,14 +300,16 @@ export class PolymarketTrading {
 		const orderType: OrderType.FOK | OrderType.FAK =
 			orderTypeStr === "FAK" ? OrderType.FAK : OrderType.FOK;
 
-		// Auto-detect market parameters if not provided
 		const marketParams = await this.getMarketParams(args.tokenId);
+		const userCollateralBalance = await this.getBuyCollateralBalance(side);
 
-		// v2 UserMarketOrder also dropped feeRateBps (server-side now).
 		const userMarketOrder: UserMarketOrderV2 = {
 			tokenID: args.tokenId,
 			amount: args.amount,
-			side: side,
+			side,
+			...(userCollateralBalance !== undefined && {
+				userUSDCBalance: userCollateralBalance,
+			}),
 		};
 
 		const client = this.getClient();

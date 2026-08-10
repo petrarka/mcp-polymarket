@@ -10,10 +10,10 @@ Changes:
 
 - Swap dependency `@polymarket/clob-client@^4.22.8` → `@polymarket/clob-client-v2@^1.0.6` (add `viem` as supporting dep).
 - `services/trading.ts`: v2 SDK uses object-form constructor (`{ host, chain, signer, ... }`), `chainId` is renamed to `chain`, and `createOrDeriveApiKey()` replaces the separate `deriveApiKey()` / `createApiKey()` calls.
-- `UserOrder` / `UserMarketOrder` now `UserOrderV2` / `UserMarketOrderV2`. The v2 types dropped `feeRateBps`, `nonce`, and `taker` (server-side now). The order-construction code was updated accordingly.
-- `services/config.ts`: `USDC_ADDRESS` (USDC.e) replaced with `COLLATERAL_ADDRESS` (pUSD `0xC011a7E1...`). Exchange addresses updated to the v2 contracts (`0xE111180...` and `0xe2222d2...`). Added `USDCE_ADDRESS`, `COLLATERAL_ONRAMP_ADDRESS`, `COLLATERAL_OFFRAMP_ADDRESS` constants for wrap/unwrap flows.
-- `services/approvals.ts`: collateral allowances now target the pUSD contract on the v2 exchanges. Rationale and rename: `getUsdcContract` → `getCollateralContract`.
-- `services/redemption.ts`: `redeemPositions` now passes pUSD as the collateral token (was USDC.e).
+- `UserOrder` / `UserMarketOrder` now `UserOrderV2` / `UserMarketOrderV2`. The v2 types dropped `feeRateBps`, `nonce`, and `taker`. BUY orders pass the user's pUSD balance for fee-aware sizing.
+- `services/config.ts`: `USDC_ADDRESS` (USDC.e) replaced with `COLLATERAL_ADDRESS` (pUSD `0xC011a7E1...`). Exchange and collateral-adapter addresses use the canonical V2 contracts. Added USDC.e onramp/offramp constants for future wrap/unwrap flows.
+- `services/approvals.ts`: pUSD and CTF approvals target the V2 exchanges and collateral adapters.
+- `services/redemption.ts`: standard and NegRisk redemption route through their V2 collateral adapters and return pUSD.
 - `services/api.ts`: dropped the `PolymarketSDK` (v1) usage from `@jsr/hk__polymarket` in favor of a direct `/book` fetch (the endpoint is public and works without auth). `GammaSDK` is retained for market discovery — Gamma API was not affected by the upgrade.
 - `tools/get-balance-allowance.ts`, `tools/update-balance-allowance.ts`: `AssetType` import path updated to v2 SDK.
 
