@@ -162,7 +162,7 @@ export class PolymarketTrading {
 			return;
 		}
 		const approvals = new PolymarketApprovals(this.getSigner());
-		await approvals.assertApproved();
+		await approvals.assertTradingApproved();
 	}
 
 	/**
