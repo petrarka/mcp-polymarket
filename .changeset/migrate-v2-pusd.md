@@ -17,6 +17,6 @@ Changes:
 - `services/api.ts`: dropped the `PolymarketSDK` (v1) usage from `@jsr/hk__polymarket` in favor of a direct `/book` fetch (the endpoint is public and works without auth). `GammaSDK` is retained for market discovery — Gamma API was not affected by the upgrade.
 - `tools/get-balance-allowance.ts`, `tools/update-balance-allowance.ts`: `AssetType` import path updated to v2 SDK.
 
-Adds `smoke-test.mjs` — 8-test regression harness that hits live Polymarket APIs (read-only by default, exercises trading-client init only if `POLYMARKET_PRIVATE_KEY` is set; never places orders). Run with `node smoke-test.mjs` after `pnpm build`.
+Adds `smoke-test.mjs` — a regression harness for live read-only APIs, signature defaults, authenticated client initialization, and V2 order signing. It never posts an order or sends an on-chain transaction. Run with `node smoke-test.mjs` after `pnpm build`.
 
 Default `signatureType` semantics are unchanged (still 2 = POLY_GNOSIS_SAFE when auto-detected with a `funderAddress`, 0 = EOA otherwise) — v2 ClobClient continues to accept `signatureType` + `funderAddress` for proxy-wallet flows.

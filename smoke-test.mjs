@@ -1,153 +1,238 @@
 #!/usr/bin/env node
-// Smoke test for the patched MCP after Polymarket v2 / pUSD migration.
-// Hits the live Polymarket APIs read-only. If POLYMARKET_PRIVATE_KEY is set,
-// also exercises the trading-client init path (creates/derives API keys, fetches
-// balance) but DOES NOT place any orders.
+// Live regression checks for the Polymarket V2 / pUSD migration.
+// Supplying POLYMARKET_PRIVATE_KEY also derives credentials and signs an order,
+// but this script never posts an order or sends an on-chain transaction.
 
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Load .env if present (without external dep). Search script dir and parent dir.
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const candidates = [join(__dirname, ".env"), join(__dirname, "..", ".env")];
-for (const envPath of candidates) {
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const envCandidates = [join(scriptDir, ".env"), join(scriptDir, "..", ".env")];
+for (const envPath of envCandidates) {
 	if (!existsSync(envPath)) continue;
 	const content = readFileSync(envPath, "utf8");
 	for (const line of content.split("\n")) {
 		const trimmed = line.trim();
 		if (!trimmed || trimmed.startsWith("#")) continue;
-		const eq = trimmed.indexOf("=");
-		if (eq < 0) continue;
-		const k = trimmed.slice(0, eq).trim();
-		const v = trimmed.slice(eq + 1).trim();
-		if (!(k in process.env)) process.env[k] = v;
+		const separator = trimmed.indexOf("=");
+		if (separator < 0) continue;
+		const key = trimmed.slice(0, separator).trim();
+		const value = trimmed.slice(separator + 1).trim();
+		if (!(key in process.env)) process.env[key] = value;
 	}
-	console.log(`(loaded env from ${envPath.replace(process.env.HOME ?? "", "~")})`);
+	console.log(
+		`Loaded environment from ${envPath.replace(process.env.HOME ?? "", "~")}`,
+	);
 	break;
 }
 
-const RESULTS = [];
+const results = [];
 let failures = 0;
 
 async function test(name, fn) {
 	const start = Date.now();
 	try {
-		const result = await fn();
+		const summary = await fn();
 		const ms = Date.now() - start;
-		RESULTS.push({ name, status: "PASS", ms, summary: result });
-		console.log(`✅ ${name} (${ms}ms)`);
-		if (result) console.log(`   ${result}`);
-	} catch (e) {
+		results.push({ name, status: "PASS", ms, summary });
+		console.log(`PASS ${name} (${ms}ms)`);
+		if (summary) console.log(`     ${summary}`);
+	} catch (error) {
 		failures++;
 		const ms = Date.now() - start;
-		const msg = e?.message || String(e);
-		RESULTS.push({ name, status: "FAIL", ms, error: msg });
-		console.log(`❌ ${name} (${ms}ms)`);
-		console.log(`   ${msg}`);
-		if (e?.stack) console.log(e.stack.split("\n").slice(1, 4).join("\n"));
-	}
-}
-
-console.log("=== Smoke test: patched mcp-polymarket vs live Polymarket v2 ===\n");
-
-// === Read-only tests (no private key needed) ===
-
-const { api } = await import("./dist/services/api.js");
-
-await test("api.listActiveMarkets — returns array of active markets", async () => {
-	const markets = await api.listActiveMarkets(5, 0);
-	if (!Array.isArray(markets)) throw new Error(`expected array, got ${typeof markets}`);
-	if (markets.length === 0) throw new Error("no active markets returned");
-	return `${markets.length} markets, first: "${markets[0].question?.slice(0, 60) ?? "(no question)"}..."`;
-});
-
-await test("api.searchMarkets — query 'counter strike' returns results", async () => {
-	const result = await api.searchMarkets("counter strike");
-	const hits = result?.events?.length ?? result?.markets?.length ?? 0;
-	return `events/markets hits: ${JSON.stringify({ events: result?.events?.length, markets: result?.markets?.length })}`;
-});
-
-let firstCs2TokenId = null;
-let firstCs2Market = null;
-
-await test("api.getMarketsByTag — find CS2 / esports markets", async () => {
-	// Tag 100196 is "Esports" on Polymarket gamma. Search for it first if unknown.
-	// Fall back to keyword search for CS2.
-	const result = await api.searchMarkets("CS2 Counter-Strike");
-	const markets = result?.markets ?? [];
-	if (markets.length === 0) return "no CS2 markets found (may be off-season)";
-	firstCs2Market = markets[0];
-	// Pull clobTokenIds — comma-separated string in gamma API
-	const tokenIds = firstCs2Market.clobTokenIds;
-	if (typeof tokenIds === "string") {
-		const parsed = JSON.parse(tokenIds);
-		firstCs2TokenId = parsed[0];
-	} else if (Array.isArray(tokenIds)) {
-		firstCs2TokenId = tokenIds[0];
-	}
-	return `picked: "${firstCs2Market.question?.slice(0, 80)}" tokenId=${firstCs2TokenId?.slice(0, 20)}...`;
-});
-
-await test("api.getOrderBook — fetch real order book for a live token", async () => {
-	if (!firstCs2TokenId) {
-		// Fall back to a known liquid token from active markets
-		const markets = await api.listActiveMarkets(20, 0);
-		for (const m of markets) {
-			const ids = typeof m.clobTokenIds === "string" ? JSON.parse(m.clobTokenIds) : m.clobTokenIds;
-			if (ids?.[0]) {
-				firstCs2TokenId = ids[0];
-				break;
-			}
+		const message = error?.message || String(error);
+		results.push({ name, status: "FAIL", ms, error: message });
+		console.log(`FAIL ${name} (${ms}ms)`);
+		console.log(`     ${message}`);
+		if (error?.stack) {
+			console.log(error.stack.split("\n").slice(1, 4).join("\n"));
 		}
 	}
-	if (!firstCs2TokenId) throw new Error("no token id available to test orderbook");
-	const book = await api.getOrderBook(firstCs2TokenId);
-	if (!book) throw new Error("null orderbook");
-	const bidLevels = book.bids?.length ?? 0;
-	const askLevels = book.asks?.length ?? 0;
-	const topBid = book.bids?.[book.bids.length - 1]?.price ?? "none";
-	const topAsk = book.asks?.[book.asks.length - 1]?.price ?? "none";
-	return `${bidLevels} bids / ${askLevels} asks, top bid ${topBid} / top ask ${topAsk}`;
-});
-
-// === Trading-mode tests (only if private key is set) ===
-
-if (process.env.POLYMARKET_PRIVATE_KEY) {
-	console.log("\n--- POLYMARKET_PRIVATE_KEY detected — running trading-client init tests ---\n");
-
-	const { tradeApi } = await import("./dist/services/trading.js");
-
-	await test("trading.getSignerAddress — returns wallet address", async () => {
-		const addr = await tradeApi.getSignerAddress();
-		if (!addr || !addr.startsWith("0x")) throw new Error(`bad address: ${addr}`);
-		return `signer: ${addr}`;
-	});
-
-	await test("trading.getServerTime — CLOB v2 server reachable", async () => {
-		const t = await tradeApi.getServerTime();
-		if (typeof t !== "number") throw new Error(`expected number, got ${typeof t}`);
-		const drift = Math.abs(Date.now() / 1000 - t);
-		return `server time ${t} (drift ${drift.toFixed(1)}s vs local)`;
-	});
-
-	await test("trading.getBalanceAllowance — pUSD balance + allowance", async () => {
-		const bal = await tradeApi.getBalanceAllowance({ asset_type: "COLLATERAL" });
-		return `balance=${bal.balance}, allowance=${bal.allowance}`;
-	});
-
-	// Smoke-test the order construction WITHOUT actually placing it.
-	await test("trading.getMarketInfo — fetch tickSize/negRisk for a live token", async () => {
-		if (!firstCs2TokenId) return "skipped (no token id)";
-		const info = await tradeApi.getMarketInfo(firstCs2TokenId);
-		return `tickSize=${info.tickSize}, negRisk=${info.negRisk}, feeRateBps=${info.feeRateBps}`;
-	});
-} else {
-	console.log("\n--- (POLYMARKET_PRIVATE_KEY not set, skipping trading tests) ---");
 }
 
-// === Summary ===
+function getFirstTokenId(markets) {
+	for (const market of markets) {
+		const tokenIds =
+			typeof market.clobTokenIds === "string"
+				? JSON.parse(market.clobTokenIds)
+				: market.clobTokenIds;
+		if (tokenIds?.[0]) return tokenIds[0];
+	}
+	return null;
+}
+
+console.log("=== mcp-polymarket V2 smoke test ===\n");
+
+const { api } = await import("./dist/services/api.js");
+const { getConfig } = await import("./dist/services/config.js");
+
+let activeMarkets = [];
+let tokenId = null;
+
+await test("api.listActiveMarkets returns active markets", async () => {
+	activeMarkets = await api.listActiveMarkets(20, 0);
+	if (!Array.isArray(activeMarkets)) {
+		throw new Error(`expected array, got ${typeof activeMarkets}`);
+	}
+	if (activeMarkets.length === 0) throw new Error("no active markets returned");
+	tokenId = getFirstTokenId(activeMarkets);
+	if (!tokenId)
+		throw new Error("active markets did not include a CLOB token ID");
+	return `${activeMarkets.length} markets; token ${tokenId.slice(0, 20)}...`;
+});
+
+await test("api.searchMarkets returns matching results", async () => {
+	const result = await api.searchMarkets("counter strike");
+	const eventCount = result?.events?.length ?? 0;
+	const marketCount = result?.markets?.length ?? 0;
+	if (eventCount + marketCount === 0) {
+		throw new Error("search returned no events or markets");
+	}
+	return `${eventCount} events, ${marketCount} markets`;
+});
+
+await test("api.getMarketsByTag returns an array", async () => {
+	const markets = await api.getMarketsByTag("100196", 5, false);
+	if (!Array.isArray(markets)) {
+		throw new Error(`expected array, got ${typeof markets}`);
+	}
+	return `${markets.length} active esports markets`;
+});
+
+await test("api.getOrderBook returns a V2 order book", async () => {
+	if (!tokenId) throw new Error("no token ID available");
+	const book = await api.getOrderBook(tokenId);
+	if (!Array.isArray(book?.bids) || !Array.isArray(book?.asks)) {
+		throw new Error("order book did not include bid and ask arrays");
+	}
+	return `${book.bids.length} bids, ${book.asks.length} asks`;
+});
+
+await test("config detects EOA and Safe signature defaults", async () => {
+	const previousSignatureType = process.env.SIGNATURE_TYPE;
+	const previousPolymarketFunder = process.env.POLYMARKET_FUNDER;
+	const previousFunderAddress = process.env.FUNDER_ADDRESS;
+	try {
+		delete process.env.SIGNATURE_TYPE;
+		delete process.env.POLYMARKET_FUNDER;
+		delete process.env.FUNDER_ADDRESS;
+
+		const eoaConfig = getConfig();
+		if (eoaConfig.signatureType !== 0) {
+			throw new Error(
+				`expected EOA signature type 0, got ${eoaConfig.signatureType}`,
+			);
+		}
+
+		const safeConfig = getConfig({
+			funderAddress: "0x0000000000000000000000000000000000000001",
+		});
+		if (safeConfig.signatureType !== 2) {
+			throw new Error(
+				`expected Safe signature type 2, got ${safeConfig.signatureType}`,
+			);
+		}
+	} finally {
+		if (previousSignatureType === undefined) delete process.env.SIGNATURE_TYPE;
+		else process.env.SIGNATURE_TYPE = previousSignatureType;
+		if (previousPolymarketFunder === undefined)
+			delete process.env.POLYMARKET_FUNDER;
+		else process.env.POLYMARKET_FUNDER = previousPolymarketFunder;
+		if (previousFunderAddress === undefined) delete process.env.FUNDER_ADDRESS;
+		else process.env.FUNDER_ADDRESS = previousFunderAddress;
+	}
+	return "EOA=0, Safe=2";
+});
+
+if (process.env.POLYMARKET_PRIVATE_KEY) {
+	console.log("\nPrivate key detected; running authenticated signing checks\n");
+
+	const { ClobClient, Side } = await import("@polymarket/clob-client-v2");
+	const { Wallet } = await import("ethers");
+	const { tradeApi } = await import("./dist/services/trading.js");
+
+	await test("trading.getSignerAddress returns an address", async () => {
+		const address = await tradeApi.getSignerAddress();
+		if (!address?.startsWith("0x")) throw new Error(`bad address: ${address}`);
+		return address;
+	});
+
+	await test("trading.getServerTime reaches CLOB V2", async () => {
+		const serverTime = await tradeApi.getServerTime();
+		if (typeof serverTime !== "number") {
+			throw new Error(`expected number, got ${typeof serverTime}`);
+		}
+		const drift = Math.abs(Date.now() / 1000 - serverTime);
+		return `${drift.toFixed(1)}s clock drift`;
+	});
+
+	await test("trading.getBalanceAllowance returns pUSD state", async () => {
+		const balance = await tradeApi.getBalanceAllowance({
+			asset_type: "COLLATERAL",
+		});
+		if (
+			typeof balance?.balance !== "string" ||
+			typeof balance?.allowances !== "object"
+		) {
+			throw new Error("unexpected balance/allowance response");
+		}
+		return `balance=${balance.balance}`;
+	});
+
+	let marketInfo = null;
+	await test("trading.getMarketInfo returns V2 parameters", async () => {
+		if (!tokenId) throw new Error("no token ID available");
+		marketInfo = await tradeApi.getMarketInfo(tokenId);
+		if (!marketInfo?.tickSize || typeof marketInfo.negRisk !== "boolean") {
+			throw new Error("missing tick size or NegRisk flag");
+		}
+		return `tickSize=${marketInfo.tickSize}, negRisk=${marketInfo.negRisk}`;
+	});
+
+	await test("V2 client constructs and signs without posting", async () => {
+		if (!tokenId || !marketInfo) throw new Error("market metadata unavailable");
+		const config = getConfig();
+		const signer = new Wallet(config.privateKey);
+		const clientOptions = {
+			host: config.host,
+			chain: config.chainId,
+			signer,
+			signatureType: config.signatureType,
+			funderAddress: config.funderAddress,
+		};
+		const credentials = await new ClobClient(
+			clientOptions,
+		).createOrDeriveApiKey();
+		const client = new ClobClient({ ...clientOptions, creds: credentials });
+		const order = await client.createOrder(
+			{
+				tokenID: tokenId,
+				price: 0.5,
+				size: 1,
+				side: Side.BUY,
+			},
+			{
+				tickSize: marketInfo.tickSize,
+				negRisk: marketInfo.negRisk,
+			},
+		);
+		if (!order.signature || !("timestamp" in order)) {
+			throw new Error("client did not construct a signed V2 order");
+		}
+		if (order.signatureType !== config.signatureType) {
+			throw new Error(
+				`expected signature type ${config.signatureType}, got ${order.signatureType}`,
+			);
+		}
+		return `signed as type ${order.signatureType}; order was not posted`;
+	});
+} else {
+	console.log("\nNo private key; authenticated checks skipped");
+}
 
 console.log("\n=== SUMMARY ===");
-console.log(`Total: ${RESULTS.length}, Pass: ${RESULTS.length - failures}, Fail: ${failures}`);
+console.log(
+	`Total: ${results.length}, Pass: ${results.length - failures}, Fail: ${failures}`,
+);
 process.exit(failures > 0 ? 1 : 0);
