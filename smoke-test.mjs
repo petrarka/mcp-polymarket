@@ -51,6 +51,28 @@ async function test(name, fn) {
 	}
 }
 
+function isTransientNetworkError(error) {
+	const message = error?.message ?? String(error);
+	return (
+		message.includes("fetch failed") ||
+		message.includes("ECONNRESET") ||
+		message.includes("ETIMEDOUT") ||
+		message.includes("certificate") ||
+		message.includes("Client network socket")
+	);
+}
+
+async function withNetworkRetry(fn, attempts = 4) {
+	for (let attempt = 1; attempt <= attempts; attempt++) {
+		try {
+			return await fn();
+		} catch (error) {
+			if (!isTransientNetworkError(error) || attempt === attempts) throw error;
+			await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+		}
+	}
+}
+
 function getFirstTokenId(markets) {
 	for (const market of markets) {
 		const tokenIds =
@@ -71,7 +93,7 @@ let activeMarkets = [];
 let tokenId = null;
 
 await test("api.listActiveMarkets returns active markets", async () => {
-	activeMarkets = await api.listActiveMarkets(20, 0);
+	activeMarkets = await withNetworkRetry(() => api.listActiveMarkets(20, 0));
 	if (!Array.isArray(activeMarkets)) {
 		throw new Error(`expected array, got ${typeof activeMarkets}`);
 	}
@@ -83,7 +105,9 @@ await test("api.listActiveMarkets returns active markets", async () => {
 });
 
 await test("api.searchMarkets returns matching results", async () => {
-	const result = await api.searchMarkets("counter strike");
+	const result = await withNetworkRetry(() =>
+		api.searchMarkets("counter strike"),
+	);
 	const eventCount = result?.events?.length ?? 0;
 	const marketCount = result?.markets?.length ?? 0;
 	if (eventCount + marketCount === 0) {
@@ -93,7 +117,9 @@ await test("api.searchMarkets returns matching results", async () => {
 });
 
 await test("api.getMarketsByTag returns an array", async () => {
-	const markets = await api.getMarketsByTag("100196", 5, false);
+	const markets = await withNetworkRetry(() =>
+		api.getMarketsByTag("100196", 5, false),
+	);
 	if (!Array.isArray(markets)) {
 		throw new Error(`expected array, got ${typeof markets}`);
 	}
@@ -102,7 +128,7 @@ await test("api.getMarketsByTag returns an array", async () => {
 
 await test("api.getOrderBook returns a V2 order book", async () => {
 	if (!tokenId) throw new Error("no token ID available");
-	const book = await api.getOrderBook(tokenId);
+	const book = await withNetworkRetry(() => api.getOrderBook(tokenId));
 	if (!Array.isArray(book?.bids) || !Array.isArray(book?.asks)) {
 		throw new Error("order book did not include bid and ask arrays");
 	}
@@ -159,7 +185,7 @@ if (process.env.POLYMARKET_PRIVATE_KEY) {
 	});
 
 	await test("trading.getServerTime reaches CLOB V2", async () => {
-		const serverTime = await tradeApi.getServerTime();
+		const serverTime = await withNetworkRetry(() => tradeApi.getServerTime());
 		if (typeof serverTime !== "number") {
 			throw new Error(`expected number, got ${typeof serverTime}`);
 		}
@@ -168,9 +194,11 @@ if (process.env.POLYMARKET_PRIVATE_KEY) {
 	});
 
 	await test("trading.getBalanceAllowance returns pUSD state", async () => {
-		const balance = await tradeApi.getBalanceAllowance({
-			asset_type: "COLLATERAL",
-		});
+		const balance = await withNetworkRetry(() =>
+			tradeApi.getBalanceAllowance({
+				asset_type: "COLLATERAL",
+			}),
+		);
 		if (
 			typeof balance?.balance !== "string" ||
 			typeof balance?.allowances !== "object"
@@ -183,7 +211,7 @@ if (process.env.POLYMARKET_PRIVATE_KEY) {
 	let marketInfo = null;
 	await test("trading.getMarketInfo returns V2 parameters", async () => {
 		if (!tokenId) throw new Error("no token ID available");
-		marketInfo = await tradeApi.getMarketInfo(tokenId);
+		marketInfo = await withNetworkRetry(() => tradeApi.getMarketInfo(tokenId));
 		if (!marketInfo?.tickSize || typeof marketInfo.negRisk !== "boolean") {
 			throw new Error("missing tick size or NegRisk flag");
 		}
@@ -201,10 +229,17 @@ if (process.env.POLYMARKET_PRIVATE_KEY) {
 			signatureType: config.signatureType,
 			funderAddress: config.funderAddress,
 		};
-		const credentials = await new ClobClient(
-			clientOptions,
-		).createOrDeriveApiKey();
-		const client = new ClobClient({ ...clientOptions, creds: credentials });
+		const credentials = await withNetworkRetry(() =>
+			new ClobClient({
+				...clientOptions,
+				throwOnError: true,
+			}).deriveApiKey(),
+		);
+		const client = new ClobClient({
+			...clientOptions,
+			creds: credentials,
+			throwOnError: true,
+		});
 		const order = await client.createOrder(
 			{
 				tokenID: tokenId,

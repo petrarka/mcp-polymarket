@@ -84,33 +84,41 @@ export class PolymarketTrading {
 	async initialize(): Promise<void> {
 		if (this.client) return;
 		const cfg = getConfig(this.config);
-		// Use StaticJsonRpcProvider to completely skip network auto-detection
-		// This prevents "could not detect network" errors from flaky RPCs
+		// Use StaticJsonRpcProvider to skip network auto-detection.
 		const provider = new providers.StaticJsonRpcProvider(
 			cfg.rpcUrl,
 			cfg.chainId,
 		);
 		const ethersSigner = new Wallet(this.config.privateKey, provider);
 		this.signer = ethersSigner;
-		const host = cfg.host;
-		// v2 ClobClient accepts ethers Wallet via the EthersSigner branch of ClobSigner.
-		const tempClient = new ClobClient({
-			host,
+		const clientOptions = {
+			host: cfg.host,
 			chain: cfg.chainId,
 			signer: ethersSigner,
 			signatureType: cfg.signatureType,
 			funderAddress: cfg.funderAddress,
-		});
-		const apiCreds = await tempClient.createOrDeriveApiKey();
+		};
 
-		// Create client with credentials
+		// The SDK helper intentionally suppresses create-key errors before deriving,
+		// but it can also return empty credentials after a transient CLOB failure.
+		const bootstrapClient = new ClobClient(clientOptions);
+		let apiCreds = await bootstrapClient.createOrDeriveApiKey();
+		if (!apiCreds.key || !apiCreds.secret || !apiCreds.passphrase) {
+			apiCreds = await new ClobClient({
+				...clientOptions,
+				throwOnError: true,
+			}).deriveApiKey();
+		}
+		if (!apiCreds.key || !apiCreds.secret || !apiCreds.passphrase) {
+			throw new Error("CLOB returned incomplete API credentials");
+		}
+
+		// Strict error handling prevents API error payloads from masquerading as
+		// successful method results.
 		this.client = new ClobClient({
-			host,
-			chain: cfg.chainId || 137,
-			signer: ethersSigner,
+			...clientOptions,
 			creds: apiCreds,
-			signatureType: cfg.signatureType,
-			funderAddress: cfg.funderAddress,
+			throwOnError: true,
 		});
 
 		log("Polymarket trading client initialized (v2 SDK)");
