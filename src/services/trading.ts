@@ -156,16 +156,13 @@ export class PolymarketTrading {
 	}
 
 	/**
-	 * Throw a structured error if approvals are missing.
-	 * Skips the approval check for funder/proxy wallets (signature type 2), as approvals are managed elsewhere.
+	 * Require direct EOA approvals before trading.
+	 * Account-wallet approvals are managed by Polymarket and cannot be submitted
+	 * by the signer EOA used for CLOB authentication.
 	 */
 	private async assertApprovals(): Promise<void> {
-		// When using proxy wallet (funder), skip approval check since
-		// proxy wallets already have approvals set up via Polymarket UI
-		if (this.config.funderAddress && this.config.signatureType === 2) {
-			// Proxy wallet mode - approvals managed by Polymarket
-			return;
-		}
+		if (this.config.funderAddress) return;
+
 		const approvals = new PolymarketApprovals(this.getSigner());
 		await approvals.assertTradingApproved();
 	}
